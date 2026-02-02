@@ -15,6 +15,7 @@
 7. [新しい業種への適用手順](#7-新しい業種への適用手順)
 8. [環境変数リファレンス](#8-環境変数リファレンス)
 9. [デプロイメントパターン](#9-デプロイメントパターン)
+10. [データ収集ツール（クローラー）](#10-データ収集ツールクローラー)
 
 ---
 
@@ -640,6 +641,165 @@ docker-compose up -d
 ### パターン3: Kubernetes（大規模）
 
 Helm chartを作成して展開。
+
+---
+
+## 10. データ収集ツール（クローラー）
+
+このOSには、L1データを収集するためのクローラーが同梱されています。
+
+### 10.1 同梱クローラー
+
+| ファイル | 説明 | 用途例 |
+|---------|------|--------|
+| `scripts/common/crawler_web.py` | 汎用Webクローラー | セキュリティサイト、ドキュメント、ニュースサイト |
+| `scripts/common/crawler_egov.py` | e-Gov法令APIクローラー | 日本の法令（労働法、税法等） |
+
+### 10.2 汎用Webクローラーの使い方
+
+**セキュリティ関連サイトをクロールする例**:
+
+```python
+from scripts.common.crawler_web import WebCrawler, CrawlConfig
+
+# 設定
+config = CrawlConfig(
+    seed_urls=[
+        "https://www.cisa.gov/news-events/cybersecurity-advisories",
+        "https://nvd.nist.gov/vuln/search",
+    ],
+    allowed_path_prefixes=["/news-events/", "/vuln/"],
+    max_urls=200,           # 最大200ページ
+    max_depth=2,            # リンクを2階層まで追跡
+    request_delay=2.0,      # 2秒間隔（サーバー負荷軽減）
+    user_agent="YourCompany-SecurityBot/1.0",
+)
+
+# クロール実行
+crawler = WebCrawler()
+results = crawler.crawl(config)
+
+# 結果確認
+for r in results:
+    if r.success:
+        print(f"取得: {r.url} ({len(r.text)} chars)")
+
+# チャンク形式に変換（インデックス構築用）
+from scripts.common.crawler_web import convert_to_chunks
+chunks = convert_to_chunks(results)
+```
+
+**特徴**:
+- BFS（幅優先探索）でリンクを追跡
+- HTMLとPDFに対応
+- エンコーディング自動検出
+- レート制限（`request_delay`）
+- ドメイン/パス制限
+
+### 10.3 e-Gov法令クローラーの使い方
+
+**日本の法令をクロールする例**:
+
+```python
+from scripts.common.crawler_egov import EgovApiCrawler, convert_to_chunks
+
+# クローラー初期化
+crawler = EgovApiCrawler()
+
+# 法令IDを指定してクロール
+# 法令IDは https://elaws.e-gov.go.jp/ で確認可能
+law_ids = [
+    "322AC0000000049",  # 労働基準法
+    "349AC0000000116",  # 雇用保険法
+    "418AC0000000004",  # 石綿健康被害救済法
+]
+
+results = crawler.fetch_all_laws(law_ids)
+
+# 結果確認
+for r in results:
+    if r.success:
+        print(f"{r.law_name}: {len(r.articles)} articles")
+
+# チャンク形式に変換
+chunks = convert_to_chunks(results)
+```
+
+**法令IDの調べ方**:
+1. https://elaws.e-gov.go.jp/ にアクセス
+2. 法令を検索して詳細ページを開く
+3. URLの `lawid=` パラメータが法令ID
+
+### 10.4 クロール→インデックス構築の流れ
+
+```python
+# 1. クロール
+from scripts.common.crawler_web import WebCrawler, CrawlConfig, convert_to_chunks
+from scripts.common.chunker import SemanticChunker
+from scripts.common.build_index import build_azure_index
+
+config = CrawlConfig(
+    seed_urls=["https://example.com/docs"],
+    max_urls=100,
+)
+crawler = WebCrawler()
+results = crawler.crawl(config)
+
+# 2. チャンキング
+chunks = convert_to_chunks(results)
+
+# 3. セマンティックチャンキング（オプション）
+semantic_chunker = SemanticChunker(max_tokens=500)
+refined_chunks = []
+for chunk in chunks:
+    refined_chunks.extend(
+        semantic_chunker.chunk(chunk["content"], chunk["source"])
+    )
+
+# 4. インデックス構築
+build_azure_index(
+    chunks=refined_chunks,
+    index_name="my-security-index",
+    recreate=True
+)
+```
+
+### 10.5 クローラー拡張
+
+新しいデータソース用のクローラーを追加する場合：
+
+1. `scripts/common/` に新しいクローラーファイルを作成
+2. `CrawlResult` 互換の結果を返す
+3. `convert_to_chunks()` 関数を実装
+
+```python
+# 例: scripts/common/crawler_rss.py
+from dataclasses import dataclass
+from typing import List, Dict
+
+@dataclass
+class RssResult:
+    url: str
+    title: str
+    content: str
+    published: str
+    success: bool = True
+
+class RssCrawler:
+    def fetch_feed(self, feed_url: str) -> List[RssResult]:
+        # RSS/Atomフィードをパース
+        ...
+
+def convert_to_chunks(results: List[RssResult]) -> List[Dict]:
+    return [
+        {
+            "content": r.content,
+            "source": r.url,
+            "metadata": {"title": r.title, "published": r.published}
+        }
+        for r in results if r.success
+    ]
+```
 
 ---
 

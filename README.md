@@ -2,182 +2,111 @@
 
 汎用マルチテナントRAG/LLMプラットフォーム（業種非依存）
 
-## 概要
+## このOSについて
 
-ECHO OS Bareboneは、マルチテナント対応のRAGチャットシステムを構築するための基盤OSです。
-業種固有のプロンプトやデータを追加することで、様々な専門分野向けAIアシスタントを構築できます。
+ECHO OS Bareboneは、**業種固有の専門知識を持つAIアシスタント**を迅速に構築するための基盤OSです。
 
-## アーキテクチャ
+- 社労士向け → 労働法、就業規則
+- 税理士向け → 税法、判例検索
+- 弁護士向け → 判例、法令検索
+- その他どんな業種にも適用可能
 
-### レイヤー構成
+**共通部分（認証、RAG、LLM連携）はすべて用意済み。業種固有のプロンプトとデータを追加するだけで動きます。**
 
+## ドキュメント
+
+| ドキュメント | 内容 |
+|------------|------|
+| **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** | **必読** - 設計思想、5層RAGアーキテクチャ、カスタマイズ方法 |
+| [.env.example](.env.example) | 環境変数テンプレート |
+
+## クイックスタート
+
+### 1. このリポジトリをコピー
+
+```bash
+cp -r echo-os-barebone your-industry-app
+cd your-industry-app
 ```
-L1: 業界共通知識     (Azure AI Search / FAISS対応)
-L2: 事務所知識       (S3 / ローカル対応) [将来拡張]
-L3: クライアント固有  (OneDrive / GDrive対応) [将来拡張]
-L4: 外部データ       (Azure AI Search / DynamoDB対応)
-L5: 会話履歴        (DynamoDB / SQLite対応)
+
+### 2. 環境変数を設定
+
+```bash
+cp .env.example .env
+# .env を編集
 ```
 
-各レイヤーは環境変数で ON/OFF 可能です。
+最低限必要な設定:
+```bash
+SERVICE_NAME=税務アシスタント
+PERSONA_NAME=税務エキスパート
+ANTHROPIC_API_KEY=sk-ant-xxx
+```
 
-### ディレクトリ構成
+### 3. 起動
+
+```bash
+# Docker
+docker-compose up
+
+# または直接
+pip install -r requirements.txt
+uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+```
+
+### 4. 動作確認
+
+```bash
+curl http://localhost:8000/health
+```
+
+## 必須カスタマイズ
+
+1. **システムプロンプト**: `src/api/llm/prompts/system.py`
+2. **環境変数**: `.env`
+
+詳細は [ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照。
+
+## ディレクトリ構成
 
 ```
 echo-os-barebone/
 ├── src/
-│   ├── api/
-│   │   ├── main.py           # FastAPI基盤
-│   │   ├── deps.py           # 依存性注入
-│   │   ├── auth_api.py       # 認証API
-│   │   ├── admin_api.py      # 管理API
-│   │   ├── client_api.py     # クライアントAPI
-│   │   └── query_handler.py  # クエリ処理
-│   ├── middleware/
-│   │   ├── host_resolver.py  # テナント解決
-│   │   └── security.py       # セキュリティ
-│   ├── services/
-│   │   ├── l1_rag_service.py            # L1検索
-│   │   ├── l4_processing_pipeline.py    # L4処理
-│   │   ├── azure_search_service.py      # Azure AI Search
-│   │   ├── intent_classifier_service.py # 意図分類
-│   │   └── memory_service.py            # L5メモリ
-│   ├── llm/
-│   │   ├── base.py           # LLM抽象化
-│   │   ├── factory.py        # LLMファクトリ
-│   │   ├── claude_provider.py
-│   │   ├── openai_provider.py
-│   │   └── prompts/
-│   │       └── system.py     # プロンプトテンプレート（空）
-│   └── models/
-│       ├── tenant.py         # テナントモデル
-│       └── client.py         # クライアントモデル
-├── backend/
-│   ├── auth_manager.py       # 認証マネージャー
-│   ├── layer5_memory_system.py  # L5メモリ
-│   └── dynamodb_layer5_system.py
+│   ├── api/                 # FastAPI アプリケーション
+│   │   ├── main.py          # エントリーポイント
+│   │   ├── query_handler.py # RAGパイプライン
+│   │   ├── llm/             # LLM抽象化レイヤー
+│   │   │   └── prompts/     # ★ プロンプト（要カスタマイズ）
+│   │   └── middleware/      # テナント解決、セキュリティ
+│   ├── services/            # ビジネスロジック
+│   │   └── intent_classifier_service.py  # ★ 意図分類（カスタマイズ推奨）
+│   ├── models/              # データモデル
+│   ├── core/                # ロギング等
+│   └── utils/
+│       └── env.py           # ★ 環境変数定義
 ├── scripts/
-│   └── common/
-│       ├── chunker.py        # チャンキング
-│       ├── embedder.py       # 埋め込み
-│       └── build_index.py    # インデックス構築
-├── frontend/
-│   └── index.html            # 最小テンプレート
-├── data/                     # データ（空）
+│   └── common/              # チャンキング、埋め込み、インデックス構築
+├── frontend/                # UIテンプレート
+├── data/                    # データ（空）
+├── docs/
+│   └── ARCHITECTURE.md      # ★ 設計ドキュメント
 ├── .env.example
 ├── requirements.txt
 ├── Dockerfile
 └── docker-compose.yml
 ```
 
-## 環境変数
+## 5層RAGアーキテクチャ
 
-### 必須設定
-
-```bash
-# サービス設定
-SERVICE_NAME=AIアシスタント
-OFFICE_NAME=事務所名
-PERSONA_NAME=AIエキスパート
-BASE_DOMAIN=example.com
-
-# デフォルトテナント
-DEFAULT_OFFICE_ID=default
+```
+L1: 業界共通知識     (Azure AI Search / FAISS)
+L2: 事務所知識       (将来拡張)
+L3: クライアント共有  (S3 / OneDrive)
+L4: クライアント固有  (Azure AI Search / DynamoDB)
+L5: 会話履歴        (DynamoDB / SQLite)
 ```
 
-### レイヤー設定
-
-```bash
-# レイヤー有効化
-L1_ENABLED=true
-L3_ENABLED=false
-L4_ENABLED=true
-L5_ENABLED=true
-
-# バックエンド選択
-L1_USE_AZURE_AI_SEARCH=true
-L4_USE_AZURE_AI_SEARCH=true
-```
-
-### LLM設定
-
-```bash
-# Anthropic Claude (推奨)
-ANTHROPIC_API_KEY=sk-ant-xxx
-
-# OpenAI (フォールバック)
-OPENAI_API_KEY=sk-xxx
-
-# Google Gemini (オプション)
-GOOGLE_API_KEY=xxx
-```
-
-### Azure AI Search設定
-
-```bash
-AZURE_SEARCH_ENDPOINT=https://xxx.search.windows.net
-AZURE_SEARCH_API_KEY=xxx
-AZURE_SEARCH_INDEX_NAME=your-index
-AZURE_SEARCH_L1_INDEX_NAME=your-l1-index
-```
-
-### AWS設定
-
-```bash
-AWS_REGION=ap-northeast-1
-DDB_TABLE_CONV=ConversationMemory
-DDB_TABLE_TENANTS=Tenants
-DDB_TABLE_CLIENTS=Clients
-```
-
-## クイックスタート
-
-### 1. 環境変数の設定
-
-```bash
-cp .env.example .env
-# .envを編集して必要な値を設定
-```
-
-### 2. ローカル起動
-
-```bash
-# Dockerを使用
-docker-compose up
-
-# または直接起動
-pip install -r requirements.txt
-uvicorn src.api.main:app --host 0.0.0.0 --port 8000
-```
-
-### 3. ヘルスチェック
-
-```bash
-curl http://localhost:8000/health
-```
-
-## カスタマイズ方法
-
-### 1. プロンプトの設定
-
-`src/api/llm/prompts/system.py` を編集して、業種固有のシステムプロンプトを設定します。
-
-```python
-SYSTEM_PROMPT = """
-あなたは{PERSONA_NAME}です。
-{company_name}の担当者からの質問に答えます。
-...
-"""
-```
-
-### 2. 意図分類のカスタマイズ
-
-`src/services/intent_classifier_service.py` のキーワードパターンを業種に合わせて調整します。
-
-### 3. L1データの投入
-
-Azure AI Searchインデックスに業界共通知識を投入します。
-`scripts/common/build_index.py` を参考にしてください。
+各レイヤーは `L1_ENABLED=true/false` で個別にON/OFF可能。
 
 ## API エンドポイント
 
@@ -187,13 +116,12 @@ Azure AI Searchインデックスに業界共通知識を投入します。
 | `/chat` | POST | チャット処理 |
 | `/chat/office` | POST | 事務所向けチャット |
 | `/admin` | GET | 管理画面 |
-| `/tenants` | GET | テナント一覧 |
-| `/admin/l1/status` | GET | L1インデックス状態 |
+| `/rag/status` | GET | RAGステータス |
 
 ## ライセンス
 
 Private - All Rights Reserved
 
-## 作成元
+---
 
-このOSは社労士版プラットフォームから汎用部分を抽出して作成されました。
+**詳細なアーキテクチャ、設計思想、カスタマイズ方法は [ARCHITECTURE.md](docs/ARCHITECTURE.md) を参照してください。**
